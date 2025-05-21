@@ -1,0 +1,64 @@
+* Backstage Docker
+An easy to configure, [[https://docs.docker.com/compose/][Docker Compose]] for [[https://backstage.io/][Backstage]]. Includes support for
+- Lets Encrypt ssl cert for https support, including http -> http2 redirect
+- Basic Auth, for restricted access
+- Postgres database on persistent volume
+- An OpenSSH server to publish TechDocs to.
+** Extended Documentation
+This Docker compose setup depends on a Backstage app as described in [[https://rm.rmdashrf.net/posts/bringing-up-backstage/][Bringing up Backstage]]. That post has an extended description leading to this hosting setup.
+** Requirements
+*** Infrastructure
+- Runs on any machine supporting Docker, e.g., Digital Ocean, AWS EC2, bare metal, etc.
+- No reliance on cloud storage (for TechDocs)
+- Access to DNS A or CNAME record (for https)
+*** Prerequisites
+- A Docker image of the Backstage application [[https://backstage.io/docs/getting-started/create-an-app][created via npx]] with a compatible [[https://github.com/rmorison/backstage-app/blob/main/app-config.production.yaml][app-config.production.yaml]]
+- A registry url for that Backstage app image, either to ~ghcr.io/rmorison/backstage-app:latest~ (from [[https://github.com/rmorison/backstage-app/pkgs/container/backstage-app][my build into ghcr.io]]) or to your own compatibly built instance
+- A ~.env~ file for the Docker compose, based on [[https://github.com/rmorison/backstage-docker/blob/main/sample.env][the sample.env]]
+- A server with [[https://docs.docker.com/engine/install/][Docker installed]], with ports 80, 443, and 2222 open (we use 2222 for publishing TechDocs over scp)
+*** TechDocs Publish SSH Keypair
+You'll need a public/private keypair to setup the TechDocs external publishing. I recommend you *do not* run the following on the server you're hosting with, but on another, secure machine. It's mostly important that you secure the private key, and not leave it lying around. Keeping it in your ~.ssh~  dir is ok. A password vault or manager is probably better, [[https://www.schneier.com/blog/archives/2022/12/lastpass-breach.html][current events notwithstanding]].
+#+begin_src shell
+  ssh-keygen -t rsa -b 4096 -N "" -C techdocs -f techdocs_rsa
+#+end_src
+** Step by Step
+- Clone or copy this repo on your server
+  #+begin_src shell
+    git clone https://github.com/rmorison/backstage-docker.git
+    cd backstage-docker
+  #+end_src
+- Create a ~.env~ file alongside the ~docker-compose.yml~; start with the ~sample.env~; see the [[*Env Docs][Env Docs]] section below
+  #+begin_src shell
+    cp sample.env .env
+    vi .env
+  #+end_src
+- Create a ~.htpasswd~ file with lines of output from the ~htpasswd~ program
+  #+begin_src shell
+    sudo apt install --yes apache2-utils
+    htpasswd -bn backstage change-this-password >>.htpasswd
+  #+end_src
+- Point a domain to your server's IP address via A or CNAME record (for Lets Encrypt certificate). That procedure is DNS provider specific, not covered here.
+- Bring up the docker cluster
+  #+begin_src shell
+    docker compose up --build
+  #+end_src
+- Visit your instance at your ~BACKSTAGE_DOMAIN~ setting
+  - Import catalogs via the ~/catalog-import~ path
+  - Publish TechDocs via your external workflows: [[https://github.com/rmorison/backstage-app/blob/main/.github/workflows/techdocs.yml][GH Action example]]
+** Env Docs
+- ~TRAEFIK_API_INSECURE~: true/false to enable/disable traefik dashboard on port 8080; you could setup an ssh tunnel to access
+- ~BACKSTAGE_APP_TITLE~: the ~app.title~ setting in the Backstage app config
+- ~BACKSTAGE_ORGANIZATION_NAME~: the ~organization.name~ setting in the Backstage app config
+- ~BACKSTAGE_DOMAIN~: DNS A or CNAME that points to this server's IP address
+- ~BACKSTAGE_IMAGE~: Docker image path of Backstage app, e.g., ~ghcr.io/rmorison/backstage-app:latest~
+- ~TECHDOCS_DIR~: mount point of published TechDocs tree in containers, e.g., ~/techdocs~
+- ~TECHDOCS_SSH_PUBLIC_KEY~: ssh public key (be sure to quote) for scp from a [[https://github.com/rmorison/backstage-app/blob/main/.github/workflows/techdocs.yml][TechDocs publish workflow]]
+  - Tip: run ~ssh-keygen -t rsa -b 4096 -N "" -C techdocs -f techdocs_rsa~, the contents of ~techdocs_rsa.pub~ goes here, the corresponding private key goes into the ~TECHDOCS_SSH_PRIVATE_KEY~ secret in the [[https://github.com/rmorison/backstage-app/blob/main/.github/workflows/techdocs.yml][TechDocs publish workflow]]
+  - Warning: store the private key file securely
+- ~TECHDOCS_UID~: set to the account UID running docker compose, e.g., 1000 on EC2; for owner of ~./techdocs~ tree
+- ~TECHDOCS_GID~: set to the account GID running docker compose, e.g., 1000 on EC2; for owner of ~./techdocs~ tree
+- ~POSTGRES_HOST~: needs to match postgres container in docker-compose.yml, e.g., ~db~
+- ~POSTGRES_PORT~: default ~5432~
+- ~POSTGRES_USER~: Postgres backstage database user
+- ~POSTGRES_PASSWORD~: Postgres backstage database user password
+- ~LETSENCRYPT_ADMIN_EMAIL~: Your admin email for Lets Encrypt cert
